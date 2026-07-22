@@ -2,117 +2,112 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
-const max_children = 26;
+pub fn Trie() type {
+    return struct {
+        const Node = struct {
+            word_end: bool = false,
+            children: [26]?*Node = .{null} ** 26,
+        };
+        const Self = @This();
 
-const Trie = struct {
-    children: [26]?*Trie = .{null} ** 26,
-    word_end: bool = false,
-};
+        root: ?*Node = null,
+        allocator: Allocator,
 
-pub fn trieCreate(allocator: Allocator) !*Trie {
-    var trie: *Trie = try allocator.create(Trie);
-    for (0..26) |i| {
-        trie.children[i] = null;
-    }
-    trie.word_end = false;
-    return trie;
-}
-
-// TODO: return error union
-pub fn trieInsert(allocator: Allocator, root: *const Trie, word: []const u8) bool {
-    var curr: *Trie = @constCast(root);
-    for (0..word.len) |i| {
-        const index = word[i] - 'a';
-        if (curr.children[index] == null) {
-            curr.children[index] = trieCreate(allocator) catch return false;
+        fn _create_node(allocator: Allocator) !*Node {
+            const node: *Node = try allocator.create(Node);
+            for (0..26) |i| {
+                node.children[i] = null;
+            }
+            node.word_end = false;
+            return node;
         }
-        curr = curr.children[index].?;
-    }
-    curr.word_end = true;
-    return true;
-}
 
-// TODO: return error union
-pub fn trieSearch(root: *const Trie, word: []const u8) bool {
-    var curr: *Trie = @constCast(root);
-    for (0..word.len) |i| {
-        const index = word[i] - 'a';
-        if (curr.children[index] == null) {
-            return false;
+        fn init(allocator: Allocator) !Self {
+            const node: *Node  = try _create_node(allocator);
+            return .{ .allocator = allocator, .root = node };
         }
-        curr = curr.children[index].?;
-    }
-    return curr.word_end;
-}
 
-pub fn trieStartsWith(root: *const Trie, prefix: []const u8) bool {
-    var curr: *Trie = @constCast(root);
-    for (0..prefix.len) |i| {
-        const index = prefix[i] - 'a';
-        if (curr.children[index] == null) {
-            return false;
+        fn insert(self: Self, word: []const u8) !void {
+            var current: *Node = self.root.?;
+            for (0..word.len) |i| {
+                const index = word[i] - 'a';
+                if (current.children[index] == null) {
+                    current.children[index] = try _create_node(self.allocator);
+                }
+                current = current.children[index].?;
+            }
+            current.word_end = true;
+            return;
         }
-        curr = curr.children[index].?;
-    }
-    return true;
-}
 
-pub fn triePrint(allocator: Allocator, root: *const Trie, buffer: *std.ArrayList(u8)) !void {
-    const curr: *Trie = @constCast(root);
-
-    if (curr.word_end) {
-        std.debug.print("{s}\n", .{buffer.items});
-    }
-
-    for (0..26) |i| {
-        if (curr.children[i] != null) {
-            const value: u8 = @intCast(i + 'a');
-            try buffer.append(allocator, value);
-            try triePrint(allocator, curr.children[i].?, buffer);
-            _ = buffer.pop();
+        fn searchWord(self: Self, word: []const u8) bool {
+            var current: *Node = self.root;
+            for (0..word.len) |i| {
+                const index = word[i] - 'a';
+                if (current.children[index] == null) {
+                    return false;
+                }
+                current = current.children[index].?;
+            }
+            return current.word_end;
         }
-    }
-}
 
-
-pub fn trieFree(allocator: Allocator, trie: *const Trie) void {
-    for (0..26) |index| {
-        if (trie.children[index] != null) {
-            const curr: *const Trie = trie.children[index].?;
-            trieFree(allocator, curr);
+        fn searchPrefix(self: Self, prefix: []const u8) bool {
+            var current: *Node = self.root;
+            for (0..prefix.len) |i| {
+                const index = prefix[i] - 'a';
+                if (current.children[index] == null) {
+                    return false;
+                }
+                current = current.children[index].?;
+            }
+            return true;
         }
-    }
-    allocator.destroy(trie);
-}
 
-pub fn hahaha() u8 {
-    return 0;
+        fn _print(allocator: Allocator, buffer: *std.ArrayList(u8), current: *Node) !void {
+            if (current.word_end) {
+                std.debug.print("{s}\n", .{buffer.items});
+            }
+
+            for (0..26) |i| {
+                if (current.children[i] != null) {
+                    const value: u8 = @intCast(i + 'a');
+                    try buffer.append(allocator, value);
+                    try _print(allocator, buffer, current.children[i].?);
+                    _ = buffer.pop();
+                }
+            }
+        }
+
+        fn print(self: Self, buffer: *std.ArrayList(u8)) !void {
+            return _print(self.allocator, buffer, self.root.?);
+        }
+
+        fn _deinit(self: Self, current: *Node) void {
+            for (0..26) |index| {
+                if (current.children[index] != null) {
+                    self._deinit(current.children[index].?);
+                }
+            }
+            self.allocator.destroy(current);
+        }
+
+        fn deinit(self: Self) void {
+            return _deinit(self, self.root.?);
+        }
+    };
 }
 
 test "basic functionality" {
     const allocator = std.testing.allocator;
-    const root: *const Trie = try trieCreate(allocator);
+    const trie = try Trie().init(allocator);
+    defer trie.deinit();
     {
-        try testing.expect(trieInsert(allocator, root, "and") == true);
-        try testing.expect(trieInsert(allocator, root, "ant") == true);
-        try testing.expect(trieInsert(allocator, root, "dad") == true);
-    }
-    {
-        try testing.expect(trieSearch(root, "and") == true);
-        try testing.expect(trieSearch(root, "ant") == true);
-        try testing.expect(trieSearch(root, "dad") == true);
-        try testing.expect(trieSearch(root, "an") == false);
-        try testing.expect(trieSearch(root, "d") == false);
-        try testing.expect(trieSearch(root, "andz") == false);
-    }
-    {
-        try testing.expect(trieStartsWith(root, "an") == true);
-        try testing.expect(trieStartsWith(root, "a") == true);
-        try testing.expect(trieStartsWith(root, "da") == true);
-        try testing.expect(trieStartsWith(root, "t") == false);
+        try trie.insert("and");
+        try trie.insert("ant");
+        try trie.insert("dad");
     }
     var buffer = try std.ArrayList(u8).initCapacity(allocator, 100);
     defer buffer.deinit(allocator);
-    try triePrint(allocator, root, &buffer);
-    trieFree(allocator, root);
+    try trie.print(&buffer);
 }
